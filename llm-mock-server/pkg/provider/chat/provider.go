@@ -19,13 +19,24 @@ type requestHandler interface {
 	HandleChatCompletions(context *gin.Context)
 }
 
+// Singleton handler instances
+var (
+	openAiHandler     = &openAiProvider{}
+	qwenHandler       = &qwenProvider{}
+	geminiHandler     = &geminiProvider{}
+	minimaxHandler    = &minimaxProvider{}
+	difyHandler       = &difyProvider{}
+	responseHandler   = &responseProvider{}
+	anthropicHandler  = &anthropicProvider{}
+)
+
 var (
 	chatCompletionsHandlers = map[string]requestHandler{
-		"minimax": &minimaxProvider{},
-		"dify":    &difyProvider{},
-		"qwen":    &qwenProvider{},
-		"gemini":  &geminiProvider{},
-		"openai":  &openAiProvider{}, // As the last fallback
+		"minimax": minimaxHandler,
+		"dify":    difyHandler,
+		"qwen":    qwenHandler,
+		"gemini":  geminiHandler,
+		"openai":  openAiHandler, // As the last fallback
 	}
 
 	chatCompletionsRoutes = []string{
@@ -52,15 +63,112 @@ var (
 		"/v1/chat-messages",
 		// gemini
 		"/v1beta/models/:modelAndAction",
-		// cloudflare 
-		"/client/v4/accounts/:accountId/ai/v1/chat/completions", 
-
+		// cloudflare
+		"/client/v4/accounts/:accountId/ai/v1/chat/completions",
 	}
 )
 
-// SetupRoutes 支持按provider类型配置不同的路由
-func SetupRoutes(server *gin.Engine, providerType string) {
-	// 根据provider类型配置对应的路由
+// providerRoute describes a single route for a provider.
+type providerRoute struct {
+	Path    string
+	Handler gin.HandlerFunc
+}
+
+// providerRouteMap maps each logical provider to its routes.
+var providerRouteMap = map[string][]providerRoute{
+	"openai": {
+		{"/v1/chat/completions", openAiHandler.HandleChatCompletions},
+		{"/v1/responses", responseHandler.HandleResponses},
+	},
+	"deepseek": {
+		{"/v1/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"anthropic": {
+		{"/v1/messages", anthropicHandler.HandleMessages},
+	},
+	"qwen": {
+		{"/compatible-mode/v1/chat/completions", openAiHandler.HandleChatCompletions},
+		{"/api/v1/services/aigc/text-generation/generation", qwenHandler.HandleChatCompletions},
+	},
+	"minimax": {
+		{"/v1/text/chatcompletion_v2", openAiHandler.HandleChatCompletions},
+		{"/v1/text/chatcompletion_pro", minimaxHandler.HandleChatCompletions},
+	},
+	"dify": {
+		{"/v1/completion-messages", difyHandler.HandleChatCompletions},
+		{"/v1/chat-messages", difyHandler.HandleChatCompletions},
+	},
+	"gemini": {
+		{"/v1beta/models/:modelAndAction", geminiHandler.HandleChatCompletions},
+	},
+	"baidu": {
+		{"/v2/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"doubao": {
+		{"/api/v3/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"zhipu": {
+		{"/api/paas/v4/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"github": {
+		{"/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"groq": {
+		{"/openai/v1/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"ai360": {
+		{"/v1/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"together": {
+		{"/v1/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"baichuan": {
+		{"/v1/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"yi": {
+		{"/v1/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"stepfun": {
+		{"/v1/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+	"cloudflare": {
+		{"/client/v4/accounts/:accountId/ai/v1/chat/completions", openAiHandler.HandleChatCompletions},
+	},
+}
+
+// SetupRoutes registers routes based on the given provider names.
+// If enabledProviders is empty, it falls back to the legacy single-provider-type mode.
+func SetupRoutes(server *gin.Engine, providerType string, enabledProviders []string) {
+	if len(enabledProviders) > 0 {
+		setupRoutesFromConfig(server, enabledProviders)
+		return
+	}
+	// Legacy mode: use providerType flag
+	setupRoutesFromType(server, providerType)
+}
+
+// setupRoutesFromConfig registers routes only for the enabled providers.
+func setupRoutesFromConfig(server *gin.Engine, enabledProviders []string) {
+	seen := map[string]bool{}
+	for _, name := range enabledProviders {
+		name = strings.ToLower(name)
+		routes, ok := providerRouteMap[name]
+		if !ok {
+			log.Warnf("Unknown provider in config: %s, skipping", name)
+			continue
+		}
+		for _, r := range routes {
+			if !seen[r.Path] {
+				server.POST(r.Path, r.Handler)
+				seen[r.Path] = true
+			}
+		}
+		log.Infof("Enabled provider: %s", name)
+	}
+}
+
+// setupRoutesFromType is the legacy single-provider mode.
+func setupRoutesFromType(server *gin.Engine, providerType string) {
 	switch strings.ToLower(providerType) {
 	case "minimax":
 		server.POST("/v1/text/chatcompletion_v2", chatCompletionsHandlers["openai"].HandleChatCompletions)
@@ -83,17 +191,19 @@ func SetupRoutes(server *gin.Engine, providerType string) {
 		server.POST("/chat/completions", chatCompletionsHandlers["openai"].HandleChatCompletions)
 	case "groq":
 		server.POST("/openai/v1/chat/completions", chatCompletionsHandlers["openai"].HandleChatCompletions)
+	case "anthropic":
+		server.POST("/v1/messages", anthropicHandler.HandleMessages)
 	case "cloudflare":
-		server.POST("/client/v4/accounts/:accountId/ai/v1/chat/completions", chatCompletionsHandlers["cloudflare"].HandleChatCompletions)
-	// 其他 cases...
+		server.POST("/client/v4/accounts/:accountId/ai/v1/chat/completions", openAiHandler.HandleChatCompletions)
 	case "openai", "ai360", "deepseek", "together", "baichuan", "yi", "stepfun":
-		// 这些provider都使用OpenAI兼容的格式，调用openAiProvider
 		server.POST("/v1/chat/completions", chatCompletionsHandlers["openai"].HandleChatCompletions)
 	default:
-		// 未知的provider类型，启用所有路由
+		// Unknown provider type, enable all routes
 		for _, route := range chatCompletionsRoutes {
 			server.POST(route, handleChatCompletions)
 		}
+		server.POST("/v1/responses", responseHandler.HandleResponses)
+		server.POST("/v1/messages", anthropicHandler.HandleMessages)
 		if providerType != "" {
 			log.Warnf("Unknown provider type: %s, enabled all routes", providerType)
 		} else {

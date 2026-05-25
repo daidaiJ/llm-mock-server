@@ -59,12 +59,27 @@ func (p *openAiProvider) handleStreamResponse(ctx *gin.Context, chatRequest chat
 		Model:   chatRequest.Model,
 	}
 	streamResponseChoice := chatCompletionChoice{Delta: &chatMessage{}}
+	thinkingEnabled := chatRequest.Thinking != nil && chatRequest.Thinking.Type == "enabled"
 	go func() {
 		responseRunes := []rune(response)
+		// When thinking is enabled, send reasoning_content chunks first
+		if thinkingEnabled {
+			reasoningText := "Thinking process: analyzing the input..."
+			for _, s := range []rune(reasoningText) {
+				streamResponseChoice.Delta = &chatMessage{ReasoningContent: string(s)}
+				streamResponse.Choices = []chatCompletionChoice{streamResponseChoice}
+				jsonStr, _ := json.Marshal(streamResponse)
+				dataChan <- string(jsonStr)
+				time.Sleep(200 * time.Millisecond)
+			}
+		}
+
+		// Send content chunks
 		for i, s := range responseRunes {
-			streamResponseChoice.Delta.Content = string(s)
+			streamResponseChoice.Delta = &chatMessage{Content: string(s)}
 			if i == len(responseRunes)-1 {
 				streamResponseChoice.FinishReason = ptr(stopReason)
+				streamResponse.Usage = &completionMockUsageWithCache
 			}
 			streamResponse.Choices = []chatCompletionChoice{streamResponseChoice}
 			jsonStr, _ := json.Marshal(streamResponse)
@@ -89,11 +104,19 @@ func (p *openAiProvider) handleStreamResponse(ctx *gin.Context, chatRequest chat
 }
 
 func (p *openAiProvider) handleNonStreamResponse(ctx *gin.Context, chatRequest chatCompletionRequest, response string) {
-	completion := createChatCompletionResponse(chatRequest.Model, response)
+	thinkingEnabled := chatRequest.Thinking != nil && chatRequest.Thinking.Type == "enabled"
+	completion := createChatCompletionResponse(chatRequest.Model, response, thinkingEnabled)
 	ctx.JSON(http.StatusOK, completion)
 }
 
-func createChatCompletionResponse(model, response string) chatCompletionResponse {
+func createChatCompletionResponse(model, response string, thinkingEnabled bool) chatCompletionResponse {
+	msg := &chatMessage{
+		Role:    roleAssistant,
+		Content: response,
+	}
+	if thinkingEnabled {
+		msg.ReasoningContent = "Thinking process: analyzing the input..."
+	}
 	return chatCompletionResponse{
 		Id:      completionMockId,
 		Object:  objectChatCompletion,
@@ -101,14 +124,11 @@ func createChatCompletionResponse(model, response string) chatCompletionResponse
 		Model:   model,
 		Choices: []chatCompletionChoice{
 			{
-				Index: 0,
-				Message: &chatMessage{
-					Role:    roleAssistant,
-					Content: response,
-				},
+				Index:        0,
+				Message:      msg,
 				FinishReason: ptr(stopReason),
 			},
 		},
-		Usage: &completionMockUsage,
+		Usage: &completionMockUsageWithCache,
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"llm-mock-server/pkg/cmd/options"
+	"llm-mock-server/pkg/config"
 	"llm-mock-server/pkg/log"
 	"llm-mock-server/pkg/middleware"
 	"llm-mock-server/pkg/provider/chat"
@@ -35,16 +36,45 @@ func Run(option *options.Option) error {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
+	// Load config
+	cfg, err := loadConfig(option)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	enabledProviders := cfg.EnabledProviders()
+	log.Infof("enabled providers: %v", enabledProviders)
+
 	server := gin.New()
 	server.Use(middleware.CORS())
 	middleware.StartLogger(server, option)
 
 	// Set up chat completion routes
-	chat.SetupRoutes(server, option.ProviderType)
+	chat.SetupRoutes(server, option.ProviderType, enabledProviders)
 
 	// embeddings
 	server.POST("/v1/embeddings", embeddings.HandleEmbeddings)
 
 	log.Infof("Starting server on port %d", option.ServerPort)
 	return server.Run(fmt.Sprintf(":%d", option.ServerPort))
+}
+
+func loadConfig(option *options.Option) (*config.Config, error) {
+	// If --config is specified, load from that file
+	if option.ConfigFile != "" {
+		return config.LoadConfig(option.ConfigFile)
+	}
+
+	// If --provider-type is specified, treat all providers as enabled (legacy mode)
+	// Return a config with no providers so SetupRoutes falls back to legacy mode
+	if option.ProviderType != "" {
+		return &config.Config{}, nil
+	}
+
+	// Default: try to load from ./config.yaml, fall back to built-in defaults
+	cfg, err := config.LoadConfig("config.yaml")
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }

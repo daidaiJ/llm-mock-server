@@ -26,6 +26,19 @@ var (
 		CompletionTokens: 1,
 		TotalTokens:      10,
 	}
+	completionMockUsageWithCache = usage{
+		PromptTokens:     9,
+		CompletionTokens: 1,
+		TotalTokens:      10,
+		PromptTokensDetails: &promptTokensDetails{
+			CachedTokens: 5,
+		},
+		CompletionTokensDetails: &completionTokensDetails{
+			ReasoningTokens: 0,
+		},
+		PromptCacheHitTokens:  5,
+		PromptCacheMissTokens: 4,
+	}
 )
 
 type chatCompletionRequest struct {
@@ -45,6 +58,12 @@ type chatCompletionRequest struct {
 	User             string                 `json:"user,omitempty"`
 	Stop             []string               `json:"stop,omitempty"`
 	ResponseFormat   map[string]interface{} `json:"response_format,omitempty"`
+	Thinking         *thinkingConfig        `json:"thinking,omitempty"`
+}
+
+type thinkingConfig struct {
+	Type           string `json:"type"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type streamOptions struct {
@@ -227,16 +246,30 @@ type chatCompletionChoice struct {
 }
 
 type usage struct {
-	PromptTokens     int `json:"prompt_tokens,omitempty"`
-	CompletionTokens int `json:"completion_tokens,omitempty"`
-	TotalTokens      int `json:"total_tokens,omitempty"`
+	PromptTokens            int                  `json:"prompt_tokens,omitempty"`
+	CompletionTokens        int                  `json:"completion_tokens,omitempty"`
+	TotalTokens             int                  `json:"total_tokens,omitempty"`
+	PromptTokensDetails     *promptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *completionTokensDetails `json:"completion_tokens_details,omitempty"`
+	// DeepSeek-specific cache fields
+	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens,omitempty"`
+}
+
+type promptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+type completionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
 type chatMessage struct {
-	Name      string     `json:"name,omitempty"`
-	Role      string     `json:"role,omitempty"`
-	Content   any        `json:"content,omitempty"`
-	ToolCalls []toolCall `json:"tool_calls,omitempty"`
+	Name              string     `json:"name,omitempty"`
+	Role              string     `json:"role,omitempty"`
+	Content           any        `json:"content,omitempty"`
+	ReasoningContent  string     `json:"reasoning_content,omitempty"`
+	ToolCalls         []toolCall `json:"tool_calls,omitempty"`
 }
 
 type messageContent struct {
@@ -358,4 +391,125 @@ type functionCall struct {
 
 func (m *functionCall) IsEmpty() bool {
 	return m.Name == "" && m.Arguments == ""
+}
+
+// Anthropic request/response models
+
+type anthropicRequest struct {
+	Model       string          `json:"model" validate:"required"`
+	Messages    []anthropicMsg  `json:"messages" validate:"required,min=1"`
+	MaxTokens   int             `json:"max_tokens" validate:"required,min=1"`
+	System      any             `json:"system,omitempty"`
+	Stream      bool            `json:"stream,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
+	TopK        *int            `json:"top_k,omitempty"`
+	StopSeq     []string        `json:"stop_sequences,omitempty"`
+}
+
+type anthropicMsg struct {
+	Role    string `json:"role" validate:"required"`
+	Content any    `json:"content" validate:"required"`
+}
+
+func (m *anthropicMsg) StringContent() string {
+	if s, ok := m.Content.(string); ok {
+		return s
+	}
+	if arr, ok := m.Content.([]any); ok {
+		for _, item := range arr {
+			if block, ok := item.(map[string]any); ok {
+				if block["type"] == "text" {
+					if text, ok := block["text"].(string); ok {
+						return text
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+type anthropicResponse struct {
+	Id           string            `json:"id"`
+	Type         string            `json:"type"`
+	Role         string            `json:"role"`
+	Content      []anthropicBlock  `json:"content"`
+	Model        string            `json:"model"`
+	StopReason   string            `json:"stop_reason"`
+	StopSequence *string           `json:"stop_sequence"`
+	Usage        anthropicUsage    `json:"usage"`
+}
+
+type anthropicBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+type anthropicUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+}
+
+// OpenAI Responses API models
+
+type responseRequest struct {
+	Model        string `json:"model" validate:"required"`
+	Input        any    `json:"input" validate:"required"`
+	Stream       bool   `json:"stream,omitempty"`
+	MaxOutputTokens int  `json:"max_output_tokens,omitempty"`
+	Temperature  *float64 `json:"temperature,omitempty"`
+	Instructions string `json:"instructions,omitempty"`
+}
+
+func (r *responseRequest) InputText() string {
+	if s, ok := r.Input.(string); ok {
+		return s
+	}
+	if arr, ok := r.Input.([]any); ok {
+		for _, item := range arr {
+			if msg, ok := item.(map[string]any); ok {
+				if content, ok := msg["content"].(string); ok {
+					return content
+				}
+				if contentArr, ok := msg["content"].([]any); ok {
+					for _, c := range contentArr {
+						if block, ok := c.(map[string]any); ok {
+							if block["type"] == "input_text" {
+								if text, ok := block["text"].(string); ok {
+									return text
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+type responseOutput struct {
+	Type    string              `json:"type"`
+	Id      string              `json:"id,omitempty"`
+	Status  string              `json:"status,omitempty"`
+	Role    string              `json:"role,omitempty"`
+	Content []responseContent   `json:"content,omitempty"`
+}
+
+type responseContent struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+type responseResult struct {
+	Id         string           `json:"id"`
+	Object     string           `json:"object"`
+	CreatedAt  int64            `json:"created_at"`
+	Model      string           `json:"model"`
+	Output     []responseOutput `json:"output"`
+	Usage      *usage           `json:"usage,omitempty"`
+	Status     string           `json:"status"`
 }

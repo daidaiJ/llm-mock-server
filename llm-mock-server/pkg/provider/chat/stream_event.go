@@ -44,6 +44,9 @@ type streamEvent struct {
 
 func encode(writer io.Writer, event streamEvent) error {
 	w := checkWriter(writer)
+	if event.Event != "" {
+		w.writeString("event: " + event.Event + "\n")
+	}
 	return writeData(w, event.Data)
 }
 

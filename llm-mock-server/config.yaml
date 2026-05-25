@@ -1,0 +1,46 @@
+# LLM Mock Server Configuration
+# Controls which model provider protocol endpoints are enabled.
+# Uncomment providers below or add new ones to enable them.
+
+providers:
+  # --- OpenAI-compatible providers (share /v1/chat/completions) ---
+  - name: openai
+    enabled: true
+  - name: deepseek
+    enabled: true
+  - name: ai360
+    enabled: false
+  - name: together
+    enabled: false
+  - name: baichuan
+    enabled: false
+  - name: yi
+    enabled: false
+  - name: stepfun
+    enabled: false
+
+  # --- Anthropic ---
+  - name: anthropic
+    enabled: true
+
+  # --- Other providers ---
+  - name: qwen
+    enabled: false
+  - name: minimax
+    enabled: false
+  - name: dify
+    enabled: false
+  - name: gemini
+    enabled: false
+  - name: baidu
+    enabled: false
+  - name: doubao
+    enabled: false
+  - name: zhipu
+    enabled: false
+  - name: github
+    enabled: false
+  - name: groq
+    enabled: false
+  - name: cloudflare
+    enabled: false

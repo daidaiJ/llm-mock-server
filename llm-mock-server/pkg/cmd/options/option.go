@@ -7,6 +7,7 @@ import (
 type Option struct {
 	ServerPort   uint32
 	ProviderType string
+	ConfigFile   string
 }
 
 func NewOption() *Option {
@@ -16,4 +17,5 @@ func NewOption() *Option {
 func (o *Option) AddFlags(flags *pflag.FlagSet) {
 	flags.Uint32Var(&o.ServerPort, "server-port", 3000, "The server port binds to.")
 	flags.StringVar(&o.ProviderType, "provider-type", "", "The provider type to use. If not specified, all routes will be enabled.")
+	flags.StringVar(&o.ConfigFile, "config", "", "Path to the YAML config file for enabling specific providers. Overrides --provider-type when set.")
 }
