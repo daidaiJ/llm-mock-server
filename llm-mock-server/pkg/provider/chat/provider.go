@@ -136,6 +136,21 @@ var providerRouteMap = map[string][]providerRoute{
 	},
 }
 
+// HandleChatCompletions is the exported handler for /v1/chat/completions.
+func HandleChatCompletions(ctx *gin.Context) {
+	openAiHandler.HandleChatCompletions(ctx)
+}
+
+// HandleAnthropicMessages is the exported handler for /v1/messages.
+func HandleAnthropicMessages(ctx *gin.Context) {
+	anthropicHandler.HandleMessages(ctx)
+}
+
+// HandleResponses is the exported handler for /v1/responses.
+func HandleResponses(ctx *gin.Context) {
+	responseHandler.HandleResponses(ctx)
+}
+
 // SetupRoutes registers routes based on the given provider names.
 // If enabledProviders is empty, it falls back to the legacy single-provider-type mode.
 func SetupRoutes(server *gin.Engine, providerType string, enabledProviders []string) {

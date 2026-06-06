@@ -41,6 +41,56 @@ var (
 	}
 )
 
+// cacheRatio is the fraction of input tokens marked as cache hits (90%).
+const cacheRatio = 90
+
+// buildUsage calculates usage based on input character count.
+// prompt_tokens equals the input character count; 90% are cache hits.
+// completion_tokens equals 10% of input character count (random substring output).
+func buildUsage(inputChars int) usage {
+	promptTokens := inputChars
+	if promptTokens < 1 {
+		promptTokens = 1
+	}
+	completionTokens := promptTokens / 10
+	if completionTokens < 1 {
+		completionTokens = 1
+	}
+	cached := promptTokens * cacheRatio / 100
+	return usage{
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      promptTokens + completionTokens,
+		PromptTokensDetails: &promptTokensDetails{
+			CachedTokens: cached,
+		},
+		CompletionTokensDetails: &completionTokensDetails{
+			ReasoningTokens: 0,
+		},
+		PromptCacheHitTokens:  cached,
+		PromptCacheMissTokens: promptTokens - cached,
+	}
+}
+
+// buildAnthropicUsage calculates Anthropic-style usage from input character count.
+func buildAnthropicUsage(inputChars int) anthropicUsage {
+	promptTokens := inputChars
+	if promptTokens < 1 {
+		promptTokens = 1
+	}
+	completionTokens := promptTokens / 10
+	if completionTokens < 1 {
+		completionTokens = 1
+	}
+	cached := promptTokens * cacheRatio / 100
+	return anthropicUsage{
+		InputTokens:              promptTokens,
+		OutputTokens:             completionTokens,
+		CacheCreationInputTokens: promptTokens - cached,
+		CacheReadInputTokens:     cached,
+	}
+}
+
 type chatCompletionRequest struct {
 	Model            string                 `json:"model" validate:"required"`
 	Messages         []chatMessage          `json:"messages" validate:"required,min=1"`

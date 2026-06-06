@@ -20,19 +20,6 @@ const (
 type anthropicProvider struct{}
 
 func (p *anthropicProvider) HandleMessages(ctx *gin.Context) {
-	// Validate API key
-	apiKey := ctx.GetHeader("x-api-key")
-	if apiKey == "" {
-		apiKey = ctx.GetHeader("Authorization")
-	}
-	if apiKey == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{
-			"type":    "error",
-			"error": gin.H{"type": "authentication_error", "message": "Missing API key"},
-		})
-		return
-	}
-
 	var req anthropicRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
@@ -62,34 +49,35 @@ func (p *anthropicProvider) HandleMessages(ctx *gin.Context) {
 		}
 	}
 	response := prompt2Response(prompt)
+	usageData := buildAnthropicUsage(len([]rune(prompt)))
 
 	if req.Stream {
-		p.handleStreamResponse(ctx, req, response)
+		p.handleStreamResponse(ctx, req, response, usageData)
 	} else {
-		p.handleNonStreamResponse(ctx, req, response)
+		p.handleNonStreamResponse(ctx, req, response, usageData)
 	}
 }
 
-func (p *anthropicProvider) handleNonStreamResponse(ctx *gin.Context, req anthropicRequest, response string) {
-	result := createAnthropicResponse(req.Model, response)
+func (p *anthropicProvider) handleNonStreamResponse(ctx *gin.Context, req anthropicRequest, response string, usageData anthropicUsage) {
+	result := createAnthropicResponse(req.Model, response, usageData)
 	ctx.JSON(http.StatusOK, result)
 }
 
-func (p *anthropicProvider) handleStreamResponse(ctx *gin.Context, req anthropicRequest, response string) {
+func (p *anthropicProvider) handleStreamResponse(ctx *gin.Context, req anthropicRequest, response string, usageData anthropicUsage) {
 	utils.SetEventStreamHeaders(ctx)
 	dataChan := make(chan string)
 	stopChan := make(chan bool, 1)
 
 	go func() {
 		// 1. message_start
-		startResp := createAnthropicResponse(req.Model, "")
+		startResp := createAnthropicResponse(req.Model, "", usageData)
 		startResp.Content = nil
 		startResp.StopReason = ""
 		startResp.Usage = anthropicUsage{
-			InputTokens:              9,
+			InputTokens:              usageData.InputTokens,
 			OutputTokens:             0,
-			CacheCreationInputTokens: 5,
-			CacheReadInputTokens:     4,
+			CacheCreationInputTokens: usageData.CacheCreationInputTokens,
+			CacheReadInputTokens:     usageData.CacheReadInputTokens,
 		}
 		p.sendSSEEvent(dataChan, "message_start", map[string]any{
 			"type":    "message_start",
@@ -134,9 +122,9 @@ func (p *anthropicProvider) handleStreamResponse(ctx *gin.Context, req anthropic
 				"stop_reason": "end_turn",
 			},
 			"usage": anthropicUsage{
-				OutputTokens:             len(responseRunes),
-				CacheCreationInputTokens: 5,
-				CacheReadInputTokens:     4,
+				OutputTokens:             usageData.OutputTokens,
+				CacheCreationInputTokens: usageData.CacheCreationInputTokens,
+				CacheReadInputTokens:     usageData.CacheReadInputTokens,
 			},
 		})
 
@@ -165,7 +153,7 @@ func (p *anthropicProvider) sendSSEEvent(ch chan<- string, eventName string, pay
 	time.Sleep(200 * time.Millisecond)
 }
 
-func createAnthropicResponse(model, response string) anthropicResponse {
+func createAnthropicResponse(model, response string, usageData anthropicUsage) anthropicResponse {
 	return anthropicResponse{
 		Id:         anthropicMockMsgId,
 		Type:       "message",
@@ -173,11 +161,6 @@ func createAnthropicResponse(model, response string) anthropicResponse {
 		Content:    []anthropicBlock{{Type: "text", Text: response}},
 		Model:      model,
 		StopReason: "end_turn",
-		Usage: anthropicUsage{
-			InputTokens:              9,
-			OutputTokens:             1,
-			CacheCreationInputTokens: 5,
-			CacheReadInputTokens:     4,
-		},
+		Usage:      usageData,
 	}
 }

@@ -32,27 +32,28 @@ func (p *responseProvider) HandleResponses(ctx *gin.Context) {
 
 	inputText := req.InputText()
 	response := prompt2Response(inputText)
+	usageData := buildUsage(len([]rune(inputText)))
 
 	if req.Stream {
-		p.handleStreamResponse(ctx, req, response)
+		p.handleStreamResponse(ctx, req, response, usageData)
 	} else {
-		p.handleNonStreamResponse(ctx, req, response)
+		p.handleNonStreamResponse(ctx, req, response, usageData)
 	}
 }
 
-func (p *responseProvider) handleNonStreamResponse(ctx *gin.Context, req responseRequest, response string) {
-	result := createResponseResult(req.Model, response)
+func (p *responseProvider) handleNonStreamResponse(ctx *gin.Context, req responseRequest, response string, usageData usage) {
+	result := createResponseResult(req.Model, response, &usageData)
 	ctx.JSON(http.StatusOK, result)
 }
 
-func (p *responseProvider) handleStreamResponse(ctx *gin.Context, req responseRequest, response string) {
+func (p *responseProvider) handleStreamResponse(ctx *gin.Context, req responseRequest, response string, usageData usage) {
 	utils.SetEventStreamHeaders(ctx)
 	dataChan := make(chan string)
 	stopChan := make(chan bool, 1)
 
 	go func() {
 		// 1. response.created
-		result := createResponseResult(req.Model, "")
+		result := createResponseResult(req.Model, "", &usageData)
 		result.Status = "in_progress"
 		p.sendEvent(dataChan, "response.created", map[string]any{"type": "response.created", "response": result})
 
@@ -120,9 +121,9 @@ func (p *responseProvider) handleStreamResponse(ctx *gin.Context, req responseRe
 		})
 
 		// 8. response.completed (with usage + cache tokens)
-		completedResult := createResponseResult(req.Model, response)
+		completedResult := createResponseResult(req.Model, response, &usageData)
 		completedResult.Status = "completed"
-		completedResult.Usage = &completionMockUsageWithCache
+		completedResult.Usage = &usageData
 		p.sendEvent(dataChan, "response.completed", map[string]any{
 			"type":     "response.completed",
 			"response": completedResult,
@@ -149,7 +150,7 @@ func (p *responseProvider) sendEvent(ch chan<- string, _ string, payload map[str
 	time.Sleep(200 * time.Millisecond)
 }
 
-func createResponseResult(model, response string) responseResult {
+func createResponseResult(model, response string, usageData *usage) responseResult {
 	output := []responseOutput{}
 	if response != "" {
 		output = append(output, responseOutput{
@@ -166,7 +167,7 @@ func createResponseResult(model, response string) responseResult {
 		CreatedAt: completionMockCreated,
 		Model:     model,
 		Output:    output,
-		Usage:     &completionMockUsageWithCache,
+		Usage:     usageData,
 		Status:    "completed",
 	}
 }

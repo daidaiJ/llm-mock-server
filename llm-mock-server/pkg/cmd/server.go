@@ -47,10 +47,16 @@ func Run(option *options.Option) error {
 
 	server := gin.New()
 	server.Use(middleware.CORS())
+	server.Use(middleware.Auth(option.AuthKey))
 	middleware.StartLogger(server, option)
 
 	// Set up chat completion routes
 	chat.SetupRoutes(server, option.ProviderType, enabledProviders)
+
+	// Ensure standard endpoints are always available
+	server.POST("/v1/chat/completions", chat.HandleChatCompletions)
+	server.POST("/v1/messages", chat.HandleAnthropicMessages)
+	server.POST("/v1/responses", chat.HandleResponses)
 
 	// embeddings
 	server.POST("/v1/embeddings", embeddings.HandleEmbeddings)

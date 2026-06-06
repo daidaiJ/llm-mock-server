@@ -40,15 +40,16 @@ func (p *openAiProvider) HandleChatCompletions(ctx *gin.Context) {
 		prompt = chatRequest.Messages[len(chatRequest.Messages)-1].StringContent()
 	}
 	response := prompt2Response(prompt)
+	usageData := buildUsage(len([]rune(prompt)))
 
 	if chatRequest.Stream {
-		p.handleStreamResponse(ctx, chatRequest, response)
+		p.handleStreamResponse(ctx, chatRequest, response, usageData)
 	} else {
-		p.handleNonStreamResponse(ctx, chatRequest, response)
+		p.handleNonStreamResponse(ctx, chatRequest, response, usageData)
 	}
 }
 
-func (p *openAiProvider) handleStreamResponse(ctx *gin.Context, chatRequest chatCompletionRequest, response string) {
+func (p *openAiProvider) handleStreamResponse(ctx *gin.Context, chatRequest chatCompletionRequest, response string, usageData usage) {
 	utils.SetEventStreamHeaders(ctx)
 	dataChan := make(chan string)
 	stopChan := make(chan bool, 1)
@@ -79,7 +80,7 @@ func (p *openAiProvider) handleStreamResponse(ctx *gin.Context, chatRequest chat
 			streamResponseChoice.Delta = &chatMessage{Content: string(s)}
 			if i == len(responseRunes)-1 {
 				streamResponseChoice.FinishReason = ptr(stopReason)
-				streamResponse.Usage = &completionMockUsageWithCache
+				streamResponse.Usage = &usageData
 			}
 			streamResponse.Choices = []chatCompletionChoice{streamResponseChoice}
 			jsonStr, _ := json.Marshal(streamResponse)
@@ -103,13 +104,13 @@ func (p *openAiProvider) handleStreamResponse(ctx *gin.Context, chatRequest chat
 	})
 }
 
-func (p *openAiProvider) handleNonStreamResponse(ctx *gin.Context, chatRequest chatCompletionRequest, response string) {
+func (p *openAiProvider) handleNonStreamResponse(ctx *gin.Context, chatRequest chatCompletionRequest, response string, usageData usage) {
 	thinkingEnabled := chatRequest.Thinking != nil && chatRequest.Thinking.Type == "enabled"
-	completion := createChatCompletionResponse(chatRequest.Model, response, thinkingEnabled)
+	completion := createChatCompletionResponse(chatRequest.Model, response, thinkingEnabled, usageData)
 	ctx.JSON(http.StatusOK, completion)
 }
 
-func createChatCompletionResponse(model, response string, thinkingEnabled bool) chatCompletionResponse {
+func createChatCompletionResponse(model, response string, thinkingEnabled bool, usageData usage) chatCompletionResponse {
 	msg := &chatMessage{
 		Role:    roleAssistant,
 		Content: response,
@@ -129,6 +130,6 @@ func createChatCompletionResponse(model, response string, thinkingEnabled bool) 
 				FinishReason: ptr(stopReason),
 			},
 		},
-		Usage: &completionMockUsageWithCache,
+		Usage: &usageData,
 	}
 }
